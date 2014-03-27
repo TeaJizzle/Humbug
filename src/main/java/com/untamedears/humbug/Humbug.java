@@ -67,6 +67,7 @@ import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.ExpBottleEvent;
+import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.entity.PotionSplashEvent;
 import org.bukkit.event.entity.SheepDyeWoolEvent;
@@ -1105,6 +1106,20 @@ public class Humbug extends JavaPlugin implements Listener {
     }
   }
 
+//=================================================
+// Combat Tag players on server join
+@BahHumbug(opt="tag_on_join", def="true")
+@EventHandler
+  public void tagOnJoin(PlayerJoinEvent event){
+	  if(!config_.get("tag_on_join").getBool()) {
+		  return;
+	  }
+	  Player loginPlayer = event.getPlayer();
+	      combatTag_.tagPlayer(loginPlayer.getName());
+	   	  String alert = "You have been Combat Tagged on Login";
+	   	  loginPlayer.sendMessage(alert);
+	  }
+
   //================================================
   // Give introduction book to n00bs
 
@@ -1329,9 +1344,12 @@ public class Humbug extends JavaPlugin implements Listener {
   }
 
   //=================================================
-  // Nerfs Strength Potions to Pre-1.6 Levels
+  // Changes Strength Potions, strength_multiplier 3 is roughly Pre-1.6 Level
 
-  @BahHumbug(opt="nerf_strength", def="true")
+  @BahHumbugs ({
+    @BahHumbug(opt="nerf_strength", def="true"),
+    @BahHumbug(opt="strength_multiplier", type=OptType.Int, def="3")
+  })
   @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
   public void onPlayerDamage(EntityDamageByEntityEvent event) {
     if (!config_.get("nerf_strength").getBool()) {
@@ -1341,12 +1359,13 @@ public class Humbug extends JavaPlugin implements Listener {
       return;
     }
     Player player = (Player)event.getDamager();
+    final int strengthMultiplier = config_.get("strength_multiplier").getInt();
     if (player.hasPotionEffect(PotionEffectType.INCREASE_DAMAGE)) {
       for (PotionEffect effect : player.getActivePotionEffects()) {
         if (effect.getType().equals(PotionEffectType.INCREASE_DAMAGE)) {
           final int potionLevel = effect.getAmplifier() + 1;
           final double unbuffedDamage = event.getDamage() / (1.3 * potionLevel + 1);
-          final double newDamage = unbuffedDamage + (potionLevel * 3);
+          final double newDamage = unbuffedDamage + (potionLevel * strengthMultiplier);
           event.setDamage(newDamage);
           break;
         }
@@ -1370,10 +1389,12 @@ public class Humbug extends JavaPlugin implements Listener {
     }
     for (LivingEntity entity : event.getAffectedEntities()) {
       if (entity instanceof Player) {
-        final double newHealth = Math.min(
+        if(((Damageable)entity).getHealth() > 0d) {
+          final double newHealth = Math.min(
             ((Damageable)entity).getHealth() + 4.0D,
             ((Damageable)entity).getMaxHealth());
-        entity.setHealth(newHealth);
+          entity.setHealth(newHealth);
+        }
       }
     }
   }
@@ -1637,6 +1658,7 @@ public class Humbug extends JavaPlugin implements Listener {
         "Player '%s' kicked for self damaging boat at %s",
         player.getName(), vehicle.getLocation().toString()));
     vehicle.eject();
+    vehicle.getWorld().dropItem(vehicle.getLocation(), new ItemStack(Material.BOAT));
     vehicle.remove();
     ((Player)passenger).kickPlayer("Nope");
   }
@@ -1664,6 +1686,7 @@ public class Humbug extends JavaPlugin implements Listener {
         "Player '%s' removed from land-boat at %s",
         ((Player)passenger).getName(), to.toString()));
     vehicle.eject();
+    vehicle.getWorld().dropItem(vehicle.getLocation(), new ItemStack(Material.BOAT));
     vehicle.remove();
   }
 
@@ -1879,6 +1902,44 @@ public class Humbug extends JavaPlugin implements Listener {
   }
 
   // ================================================
+  // Hunger Changes
+  @BahHumbug(opt="hunger_slowdown", type=OptType.Double, def="0.0")
+  @EventHandler
+  public void onFoodLevelChange(FoodLevelChangeEvent event) {
+      final Player player = (Player) event.getEntity();
+      final double mod = config_.get("hunger_slowdown").getDouble();
+      final double saturation = Math.min(
+          player.getSaturation() + mod,
+          20.0D + (mod * 2.0D));
+      player.setSaturation((float)saturation);
+  }
+//=================================================
+  //Remove Book Copying
+  @BahHumbug(opt="copy_book_enable", def= "false")
+  public void removeBooks() {
+    if (config_.get("copy_book_enable").getBool()) {
+      return;
+    }
+    Iterator<Recipe> it = getServer().recipeIterator();
+    while (it.hasNext()) {
+      Recipe recipe = it.next();
+      ItemStack resulting_item = recipe.getResult();
+      if ( // !copy_book_enable_ &&
+          isWrittenBook(resulting_item)) {
+        it.remove();
+        info("Copying Books disabled");
+      }
+    }
+  }
+  
+  public boolean isWrittenBook(ItemStack item) {
+	    if (item == null) {
+	      return false;
+	    }
+	    Material material = item.getType();
+	    return material.equals(Material.WRITTEN_BOOK);
+	  }
+  // ================================================
   // General
 
   public void onLoad()
@@ -1892,6 +1953,7 @@ public class Humbug extends JavaPlugin implements Listener {
     registerEvents();
     registerCommands();
     removeRecipies();
+    removeBooks();
     global_instance_ = this;
     info("Enabled");
   }
